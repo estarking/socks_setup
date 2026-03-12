@@ -68,21 +68,3 @@ chmod +x manage_socks5.sh
 ```bash
 curl -x "socks5h://<user>:<pass>@<server_ip>:<port>" -sS https://google.com && echo
 ```
-
-## Security Notes
-
-- Do not expose weak credentials in public.
-- Prefer `ALLOW_IP=<your_fixed_ip>/32` to limit source access.
-- Rotate password after sharing any logs/screenshots.
-- SOCKS5 itself is not an end-to-end encrypted tunnel for destination traffic semantics.
-
-## Publish To GitHub
-
-```bash
-git init
-git add .
-git commit -m "feat: initial socks5 debian installer"
-git branch -M main
-git remote add origin <your-repo-url>
-git push -u origin main
-```
