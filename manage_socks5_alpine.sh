@@ -58,7 +58,7 @@ Remove options:
   --allow-ip <cidr>          override old allow-ip when metadata is missing
   --remove-fw-rules | --keep-fw-rules
   --remove-ufw-rules | --keep-ufw-rules   (legacy aliases)
-  --purge                    remove xray package via official installer
+  --purge                    remove xray binary files
 
 Show options:
   --show-pass
@@ -312,11 +312,62 @@ current_udp_to_flag() {
 
 ensure_packages() {
   need_alpine
-  local pkgs=(bash curl ca-certificates jq openssl iptables)
+  local pkgs=(bash curl ca-certificates jq openssl iptables unzip)
   apk add --no-cache "${pkgs[@]}"
   if [[ "${ENABLE_FIREWALL:-1}" == "1" && ! -f /etc/init.d/iptables ]]; then
     apk add --no-cache iptables-openrc >/dev/null 2>&1 || true
   fi
+}
+
+detect_xray_asset_arch() {
+  local machine
+  machine="$(uname -m)"
+  case "$machine" in
+  x86_64 | amd64) echo "64" ;;
+  i386 | i686) echo "32" ;;
+  aarch64 | arm64) echo "arm64-v8a" ;;
+  armv7l | armv7) echo "arm32-v7a" ;;
+  armv6l | armv6) echo "arm32-v6" ;;
+  s390x) echo "s390x" ;;
+  riscv64) echo "riscv64" ;;
+  loongarch64) echo "loong64" ;;
+  *)
+    die "Unsupported CPU architecture for Xray: $machine"
+    ;;
+  esac
+}
+
+install_xray_binary_from_release() {
+  need_cmd curl
+  need_cmd unzip
+
+  local asset url tmpdir
+  asset="$(detect_xray_asset_arch)"
+  url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${asset}.zip"
+  tmpdir="$(mktemp -d)"
+
+  echo "Downloading Xray asset: Xray-linux-${asset}.zip"
+  if ! curl -fL "$url" -o "$tmpdir/xray.zip"; then
+    rm -rf "$tmpdir"
+    die "Failed to download Xray binary package."
+  fi
+
+  if ! unzip -oq "$tmpdir/xray.zip" -d "$tmpdir"; then
+    rm -rf "$tmpdir"
+    die "Failed to extract Xray package."
+  fi
+
+  [[ -f "$tmpdir/xray" ]] || {
+    rm -rf "$tmpdir"
+    die "Xray binary not found in downloaded package."
+  }
+
+  install -m 755 "$tmpdir/xray" "$XRAY_BIN"
+  mkdir -p /usr/local/share/xray
+  [[ -f "$tmpdir/geoip.dat" ]] && install -m 644 "$tmpdir/geoip.dat" /usr/local/share/xray/geoip.dat
+  [[ -f "$tmpdir/geosite.dat" ]] && install -m 644 "$tmpdir/geosite.dat" /usr/local/share/xray/geosite.dat
+
+  rm -rf "$tmpdir"
 }
 
 install_xray_if_needed() {
@@ -324,11 +375,18 @@ install_xray_if_needed() {
     return 0
   fi
   echo "Installing Xray..."
-  set +e
-  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-  local rc=$?
-  set -e
-  command -v xray >/dev/null 2>&1 || die "Xray install failed (exit: $rc)."
+  install_xray_binary_from_release
+  command -v xray >/dev/null 2>&1 || die "Xray install failed."
+}
+
+purge_xray_files() {
+  local bin_path
+  bin_path="$(command -v xray || true)"
+  if [[ -n "$bin_path" ]]; then
+    rm -f "$bin_path" || true
+  fi
+  rm -f "$XRAY_BIN" || true
+  rm -rf /usr/local/share/xray || true
 }
 
 backup_config_if_exists() {
@@ -626,7 +684,7 @@ cmd_remove() {
   rm -f "$XRAY_CFG" "$META_FILE" "$OPENRC_SERVICE_FILE"
 
   if [[ "$PURGE_XRAY" == "1" ]]; then
-    bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove || true
+    purge_xray_files
   fi
 
   echo "Remove completed."
