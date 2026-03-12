@@ -5,7 +5,7 @@ XRAY_CFG="/usr/local/etc/xray/config.json"
 XRAY_SVC="xray"
 META_FILE="/usr/local/etc/xray/socks5-manager.meta"
 
-ACTION="${1:-help}"
+ACTION="${1:-menu}"
 shift || true
 
 PORT=""
@@ -32,6 +32,8 @@ META_ENABLE_UFW=""
 usage() {
   cat <<'EOF'
 Usage:
+  manage_socks5.sh                # interactive menu
+  manage_socks5.sh menu           # interactive menu
   manage_socks5.sh install [options]
   manage_socks5.sh update  [options]
   manage_socks5.sh remove  [options]
@@ -62,17 +64,18 @@ Test options:
   --test-host <host>         default: 127.0.0.1
 
 Examples:
+  ./manage_socks5.sh
   ./manage_socks5.sh install --port 8888 --user king
   ./manage_socks5.sh update --port 34578 --pass 'NewStrongPassword'
   ./manage_socks5.sh show --show-pass
-  ./manage_socks5.sh test --test-url https://google.com
+  ./manage_socks5.sh test --test-url https://api.telegram.org
   ./manage_socks5.sh remove --purge
 EOF
 }
 
 die() {
   echo "ERROR: $*" >&2
-  exit 1
+  return 1 2>/dev/null || exit 1
 }
 
 need_root() {
@@ -178,6 +181,75 @@ parse_args() {
       ;;
     esac
   done
+}
+
+prompt_text() {
+  local label="$1"
+  local default="${2:-}"
+  local value=""
+  if [[ -n "$default" ]]; then
+    read -r -p "${label} [${default}]: " value || true
+  else
+    read -r -p "${label}: " value || true
+  fi
+  if [[ -z "$value" ]]; then
+    echo "$default"
+  else
+    echo "$value"
+  fi
+}
+
+prompt_password_optional() {
+  local label="$1"
+  local value=""
+  read -r -s -p "${label}: " value || true
+  echo
+  echo "$value"
+}
+
+prompt_yes_no() {
+  local label="$1"
+  local default="${2:-1}"
+  local hint="y/N"
+  local value=""
+
+  if [[ "$default" == "1" ]]; then
+    hint="Y/n"
+  fi
+
+  while true; do
+    read -r -p "${label} [${hint}]: " value || true
+    value="${value,,}"
+    if [[ -z "$value" ]]; then
+      echo "$default"
+      return
+    fi
+    case "$value" in
+    y | yes | 1)
+      echo "1"
+      return
+      ;;
+    n | no | 0)
+      echo "0"
+      return
+      ;;
+    *)
+      echo "Please input y or n."
+      ;;
+    esac
+  done
+}
+
+run_action_safe() {
+  local fn="$1"
+  set +e
+  "$fn"
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "Action failed with exit code: $rc"
+  fi
+  return "$rc"
 }
 
 load_meta() {
@@ -333,7 +405,7 @@ restart_service() {
 
 get_public_ip() {
   local ip=""
-  ip="$(curl -4fsS https://google.com || true)"
+  ip="$(curl -4fsS https://api.ipify.org || true)"
   if [[ -z "$ip" ]]; then
     ip="$(curl -4fsS https://ipv4.icanhazip.com 2>/dev/null | tr -d '\r\n' || true)"
   fi
@@ -471,8 +543,8 @@ cmd_show() {
   [[ -f "$XRAY_CFG" ]] || die "Config file not found: $XRAY_CFG"
   read_current_config
   load_meta
-
   [[ -n "$CURRENT_PORT" && -n "$CURRENT_USER" ]] || die "No SOCKS inbound found in config."
+
   local ip pass_out
   ip="$(get_public_ip)"
   if [[ "$SHOW_PASS" == "1" ]]; then
@@ -524,9 +596,126 @@ cmd_test() {
   echo "Test succeeded."
 }
 
+menu_install() {
+  read_current_config
+  load_meta
+
+  local default_port default_user default_allow default_ufw default_udp
+  default_port="${CURRENT_PORT:-8888}"
+  default_user="${CURRENT_USER:-king}"
+  default_allow="${META_ALLOW_IP:-}"
+  default_ufw="${META_ENABLE_UFW:-1}"
+  default_udp="${META_ALLOW_UDP:-$(current_udp_to_flag)}"
+
+  echo ">>> Install/Reinstall SOCKS5"
+  PORT="$(prompt_text "Port" "$default_port")"
+  PROXY_USER="$(prompt_text "Username" "$default_user")"
+  PROXY_PASS="$(prompt_password_optional "Password (empty = auto generate)")"
+  ALLOW_IP="$(prompt_text "Allow source IP/CIDR (empty = no limit)" "$default_allow")"
+  ENABLE_UFW="$(prompt_yes_no "Enable UFW rules" "$default_ufw")"
+  ALLOW_UDP="$(prompt_yes_no "Enable UDP" "$default_udp")"
+
+  run_action_safe cmd_install || true
+}
+
+menu_update() {
+  read_current_config
+  load_meta
+
+  if [[ ! -f "$XRAY_CFG" || -z "$CURRENT_PORT" || -z "$CURRENT_USER" || -z "$CURRENT_PASS" ]]; then
+    echo "No existing SOCKS5 config found. Please install first."
+    return 0
+  fi
+
+  local default_ufw default_udp new_pass
+  default_ufw="${META_ENABLE_UFW:-1}"
+  default_udp="${META_ALLOW_UDP:-$(current_udp_to_flag)}"
+
+  echo ">>> Update SOCKS5 config"
+  PORT="$(prompt_text "Port" "$CURRENT_PORT")"
+  PROXY_USER="$(prompt_text "Username" "$CURRENT_USER")"
+  new_pass="$(prompt_password_optional "New password (empty = keep current)")"
+  if [[ -n "$new_pass" ]]; then
+    PROXY_PASS="$new_pass"
+  else
+    PROXY_PASS="$CURRENT_PASS"
+  fi
+  ALLOW_IP="$(prompt_text "Allow source IP/CIDR (empty = no limit)" "${META_ALLOW_IP:-}")"
+  ENABLE_UFW="$(prompt_yes_no "Enable UFW rules" "$default_ufw")"
+  ALLOW_UDP="$(prompt_yes_no "Enable UDP" "$default_udp")"
+
+  run_action_safe cmd_update || true
+}
+
+menu_remove() {
+  read_current_config
+  load_meta
+
+  local default_port default_allow confirm
+  default_port="${META_PORT:-${CURRENT_PORT:-8888}}"
+  default_allow="${META_ALLOW_IP:-}"
+
+  echo ">>> Remove SOCKS5 config"
+  PORT="$(prompt_text "Port used for firewall cleanup" "$default_port")"
+  ALLOW_IP="$(prompt_text "Old allowed source IP/CIDR (empty = no limit)" "$default_allow")"
+  REMOVE_UFW_RULES="$(prompt_yes_no "Remove firewall rules" "1")"
+  PURGE_XRAY="$(prompt_yes_no "Purge Xray binaries" "0")"
+  confirm="$(prompt_yes_no "Confirm remove action" "0")"
+  if [[ "$confirm" != "1" ]]; then
+    echo "Canceled."
+    return 0
+  fi
+
+  run_action_safe cmd_remove || true
+}
+
+menu_test() {
+  echo ">>> Test SOCKS5"
+  TEST_HOST="$(prompt_text "Test host (usually 127.0.0.1)" "$TEST_HOST")"
+  TEST_URL="$(prompt_text "Test URL" "$TEST_URL")"
+  run_action_safe cmd_test || true
+}
+
+cmd_menu() {
+  if [[ ! -t 0 ]]; then
+    usage
+    return 0
+  fi
+
+  while true; do
+    echo
+    echo "===== SOCKS5 Manager ====="
+    echo "1) Install/Reinstall"
+    echo "2) Update"
+    echo "3) Show Config"
+    echo "4) Status"
+    echo "5) Test Proxy"
+    echo "6) Remove"
+    echo "0) Exit"
+    read -r -p "Choose [0-6]: " choice || true
+
+    case "${choice:-}" in
+    1) menu_install ;;
+    2) menu_update ;;
+    3) run_action_safe cmd_show || true ;;
+    4) run_action_safe cmd_status || true ;;
+    5) menu_test ;;
+    6) menu_remove ;;
+    0)
+      echo "Bye."
+      return 0
+      ;;
+    *)
+      echo "Invalid choice. Please enter 0-6."
+      ;;
+    esac
+  done
+}
+
 parse_args "$@"
 
 case "$ACTION" in
+menu) cmd_menu ;;
 install) cmd_install ;;
 update) cmd_update ;;
 remove | uninstall) cmd_remove ;;
