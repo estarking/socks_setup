@@ -202,8 +202,7 @@ prompt_text() {
 prompt_password_optional() {
   local label="$1"
   local value=""
-  read -r -s -p "${label}: " value || true
-  echo
+  read -r -p "${label}: " value || true
   echo "$value"
 }
 
