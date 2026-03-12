@@ -17,7 +17,7 @@ ALLOW_UDP=""
 REMOVE_UFW_RULES="1"
 PURGE_XRAY="0"
 SHOW_PASS="0"
-TEST_URL="https://google.com"
+TEST_URL="https://api.ipify.org"
 TEST_HOST="127.0.0.1"
 
 CURRENT_PORT=""
@@ -60,7 +60,7 @@ Show options:
   --show-pass
 
 Test options:
-  --test-url <url>           default: https://google.com
+  --test-url <url>           default: https://api.ipify.org
   --test-host <host>         default: 127.0.0.1
 
 Examples:
@@ -252,6 +252,17 @@ run_action_safe() {
   return "$rc"
 }
 
+print_curl_test_cmd() {
+  local host="$1"
+  local port="$2"
+  local user="$3"
+  local pass="$4"
+  local proxy_arg auth_arg
+  printf -v proxy_arg '%q' "socks5h://${host}:${port}"
+  printf -v auth_arg '%q' "${user}:${pass}"
+  echo "curl --proxy ${proxy_arg} --proxy-user ${auth_arg} -sS https://api.ipify.org && echo"
+}
+
 load_meta() {
   [[ -f "$META_FILE" ]] || return 0
   while IFS='=' read -r k v; do
@@ -419,8 +430,9 @@ print_connection() {
   echo "Port: $PORT"
   echo "Username: $PROXY_USER"
   echo "Password: $PROXY_PASS"
-  echo "Proxy URL: socks5://${PROXY_USER}:${PROXY_PASS}@${host}:${PORT}"
-  echo "Test: curl -x 'socks5h://${PROXY_USER}:${PROXY_PASS}@${host}:${PORT}' -sS https://google.com && echo"
+  echo "Proxy endpoint: socks5h://${host}:${PORT}"
+  echo "Test:"
+  print_curl_test_cmd "$host" "$PORT" "$PROXY_USER" "$PROXY_PASS"
 }
 
 validate_runtime_values() {
@@ -588,10 +600,10 @@ cmd_test() {
   read_current_config
   [[ -n "$CURRENT_PORT" && -n "$CURRENT_USER" && -n "$CURRENT_PASS" ]] || die "Cannot read current SOCKS settings."
 
-  local proxy_url
-  proxy_url="socks5h://${CURRENT_USER}:${CURRENT_PASS}@${TEST_HOST}:${CURRENT_PORT}"
   echo "Testing proxy: ${TEST_HOST}:${CURRENT_PORT}"
-  curl -x "$proxy_url" -sS --connect-timeout 8 --max-time 20 "$TEST_URL"
+  curl --proxy "socks5h://${TEST_HOST}:${CURRENT_PORT}" \
+    --proxy-user "${CURRENT_USER}:${CURRENT_PASS}" \
+    -sS --connect-timeout 8 --max-time 20 "$TEST_URL"
   echo
   echo "Test succeeded."
 }

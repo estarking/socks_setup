@@ -45,5 +45,5 @@ Remove:
 ## Manual Proxy Test
 
 ```bash
-curl -x "socks5h://<user>:<pass>@<server_ip>:<port>" -sS https://google.com && echo
+curl --proxy "socks5h://<server_ip>:<port>" --proxy-user "<user>:<pass>" -sS https://api.ipify.org && echo
 ```
