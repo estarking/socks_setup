@@ -13,7 +13,7 @@ chmod +x manage_socks5.sh
 安装：
 
 ```bash
-./manage_socks5.sh install --port 18888 --user jiang
+./manage_socks5.sh install --port 8888 --user king
 ```
 
 修改（端口/账号/密码）：
@@ -39,7 +39,7 @@ chmod +x manage_socks5.sh
 
 ```bash
 ./manage_socks5.sh test
-./manage_socks5.sh test --test-url https://api.telegram.org
+./manage_socks5.sh test --test-url https://google.com
 ```
 
 删除配置并停服务：
@@ -66,7 +66,7 @@ chmod +x manage_socks5.sh
 ## 代理连通性手动测试
 
 ```bash
-curl -x "socks5h://<user>:<pass>@<server_ip>:<port>" -sS https://api.ipify.org && echo
+curl -x "socks5h://<user>:<pass>@<server_ip>:<port>" -sS https://google.com && echo
 ```
 
 ## Security Notes
